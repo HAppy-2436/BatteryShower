@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import * as echarts from "echarts/core";
 import { LineChart } from "echarts/charts";
@@ -27,26 +27,32 @@ const chartEl = ref<HTMLDivElement | null>(null);
 const chargeSession = ref<PowerSession | null>(null);
 const dischargeSession = ref<PowerSession | null>(null);
 const activeTab = ref<"charge" | "discharge">("charge");
+const loadError = ref<string | null>(null);
+const isLoading = ref(false);
 let chart: echarts.ECharts | null = null;
+let pollTimer: number | null = null;
 
 function formatSession(s: PowerSession | null) {
-  if (!s) return { points: [], avg: 0, energy: 0, duration: 0 };
+  if (!s) return { points: [] as [number, number][], avg: 0, energy: 0, duration: 0 };
   const t0 = s.samples[0]?.timestamp ?? 0;
   const points = s.samples.map((p) => [p.timestamp - t0, p.power_watts]);
   const powerSum = s.samples.reduce((a, b) => a + b.power_watts, 0);
   const avg = powerSum / Math.max(1, s.samples.length);
-  // crude trapezoid integration of power over time -> Wh
   let energy = 0;
   for (let i = 1; i < s.samples.length; i++) {
-    const dt = s.samples[i].timestamp - s.samples[i - 1].timestamp; // seconds
+    const dt = s.samples[i].timestamp - s.samples[i - 1].timestamp;
     energy += (s.samples[i].power_watts + s.samples[i - 1].power_watts) * 0.5 * dt;
   }
-  energy /= 3600; // J -> Wh
+  energy /= 3600;
   const duration =
     s.samples.length > 1
-      ? s.samples[s.samples.length - 1].timestamp - s.samples[0].timestamp
+      ? s.samples[samples_safe_last(s)].timestamp - s.samples[0].timestamp
       : 0;
   return { points, avg, energy, duration };
+}
+
+function samples_safe_last(s: PowerSession): number {
+  return s.samples.length - 1;
 }
 
 function renderChart() {
@@ -54,21 +60,24 @@ function renderChart() {
   const session =
     activeTab.value === "charge" ? chargeSession.value : dischargeSession.value;
   const { points, avg, energy, duration } = formatSession(session);
+  const hasData = points.length > 0;
   chart.setOption(
     {
       backgroundColor: "transparent",
       textStyle: { color: "#e5e7eb" },
       grid: { left: 50, right: 20, top: 30, bottom: 40 },
-      tooltip: {
-        trigger: "axis",
-        backgroundColor: "#1f2937",
-        borderColor: "#374151",
-        textStyle: { color: "#e5e7eb" },
-        formatter: (params: any) => {
-          const p = params[0];
-          return `${(p.value[0] / 60).toFixed(1)} min<br/><b>${p.value[1].toFixed(2)} W</b>`;
-        },
-      },
+      tooltip: hasData
+        ? {
+            trigger: "axis",
+            backgroundColor: "#1f2937",
+            borderColor: "#374151",
+            textStyle: { color: "#e5e7eb" },
+            formatter: (params: any) => {
+              const p = params[0];
+              return `${(p.value[0] / 60).toFixed(1)} min<br/><b>${p.value[1].toFixed(0)} W</b>`;
+            },
+          }
+        : { show: false },
       xAxis: {
         type: "value",
         name: "min",
@@ -106,12 +115,18 @@ function renderChart() {
     },
     true,
   );
-  stats.value = { avg, energy, duration, count: session?.samples.length ?? 0 };
+  stats.value = {
+    avg,
+    energy,
+    duration,
+    count: session?.samples.length ?? 0,
+  };
 }
 
 const stats = ref({ avg: 0, energy: 0, duration: 0, count: 0 });
 
 async function load() {
+  isLoading.value = true;
   try {
     const [c, d] = await Promise.all([
       invoke<PowerSession | null>("get_latest_charge_session"),
@@ -119,9 +134,13 @@ async function load() {
     ]);
     chargeSession.value = c;
     dischargeSession.value = d;
+    loadError.value = null;
     renderChart();
   } catch (e) {
+    loadError.value = String(e);
     console.error("load session failed:", e);
+  } finally {
+    isLoading.value = false;
   }
 }
 
@@ -130,6 +149,21 @@ onMounted(() => {
     chart = echarts.init(chartEl.value);
   }
   load();
+  // Auto-refresh every 3 s so an in-progress session shows up live
+  // (matches the 1 Hz backend sampling rate and feels real-time without
+  // hammering the SQLite query).
+  pollTimer = window.setInterval(load, 3000);
+});
+
+onUnmounted(() => {
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (chart) {
+    chart.dispose();
+    chart = null;
+  }
 });
 </script>
 
@@ -148,6 +182,19 @@ onMounted(() => {
       >
         Discharge
       </button>
+      <span class="refresh-hint" v-if="isLoading">refreshing…</span>
+    </div>
+
+    <div v-if="loadError" class="alert error">
+      <strong>Backend error:</strong> {{ loadError }}
+    </div>
+
+    <div
+      v-else-if="stats.count === 0"
+      class="alert info"
+    >
+      No samples yet for this session. Plug / unplug the charger to start
+      one (samples flow in at 1 Hz).
     </div>
 
     <div class="stats">
@@ -157,7 +204,7 @@ onMounted(() => {
       </div>
       <div class="stat">
         <div class="label">Avg power</div>
-        <div class="value">{{ stats.avg.toFixed(2) }} W</div>
+        <div class="value">{{ Math.round(stats.avg) }} W</div>
       </div>
       <div class="stat">
         <div class="label">Duration</div>
@@ -168,7 +215,7 @@ onMounted(() => {
       </div>
       <div class="stat">
         <div class="label">Energy</div>
-        <div class="value">{{ stats.energy.toFixed(2) }} Wh</div>
+        <div class="value">{{ stats.energy.toFixed(1) }} Wh</div>
       </div>
     </div>
 
@@ -188,6 +235,7 @@ onMounted(() => {
 .tabs {
   display: flex;
   gap: 4px;
+  align-items: center;
   margin-bottom: 12px;
 }
 
@@ -212,6 +260,32 @@ onMounted(() => {
   background: #10b981;
   color: #0a0a0a;
   border-color: #10b981;
+}
+
+.refresh-hint {
+  margin-left: auto;
+  color: #6b7280;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.alert {
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.alert.error {
+  background: #7f1d1d;
+  color: #fecaca;
+  border: 1px solid #991b1b;
+}
+
+.alert.info {
+  background: #1f2937;
+  color: #d1d5db;
+  border: 1px solid #374151;
 }
 
 .stats {

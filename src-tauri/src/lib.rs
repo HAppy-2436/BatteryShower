@@ -1,4 +1,5 @@
 //! BatteryShower — Tauri 2 + Rust + Vue 3 entry point.
+//! (build bump 2026-07-13: refresh dist embed)
 //!
 //! Lifecycle:
 //! 1. `setup` — open SQLite store, init battery monitor, build tray, start
@@ -227,8 +228,8 @@ async fn process_reading(
     drop(avg);
 
     // ---- 4. Update tray icon (rule #1: full→white, charging→green, discharge→red; rule #1.1 gradient) ----
-    // Show the watts value in all three states (rule #1); only the *color* changes.
-    let display = format!("{:.1}", reading.power_watts);
+    // Integer watts, no decimal — user requested "不需要显示小数点后".
+    let display = format!("{}", reading.power_watts.round() as i32);
     let png_bytes = render_icon(&display, reading.state, reading.percentage);
     match Image::from_bytes(&png_bytes) {
         Ok(img) => {

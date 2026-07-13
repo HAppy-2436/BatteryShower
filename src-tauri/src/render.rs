@@ -23,7 +23,7 @@ use crate::sensors::State;
 /// System monospace font shipped with every Windows install (Win2k → Win11).
 const FONT_DATA: &[u8] = include_bytes!("../assets/Consola.ttf");
 
-const ICON_SIZE: u32 = 64;
+const ICON_SIZE: u32 = 96;
 
 /// Render a 64×64 PNG-encoded tray icon. The returned bytes are passed
 /// to `tauri::image::Image::from_bytes`.
@@ -42,13 +42,14 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
         let font =
             FontRef::try_from_slice(FONT_DATA).expect("failed to parse embedded Consola.ttf");
 
-        // Adaptive font size: 1 char → big, 4+ chars → small. Doubled vs
-        // the 32×32 draft because the canvas is now 64×64.
+        // Adaptive font size for a 96×96 canvas. Bigger strokes for legibility
+        // on 4K / @2x DPI taskbars (which is what the user reported as
+        // "数字完全看不清分辨率太低太低").
         let scale: PxScale = match value.chars().count() {
-            1 => PxScale::from(52.0),
-            2 => PxScale::from(44.0),
-            3 => PxScale::from(34.0),
-            _ => PxScale::from(28.0),
+            1 => PxScale::from(80.0),
+            2 => PxScale::from(64.0),
+            3 => PxScale::from(48.0),
+            _ => PxScale::from(40.0),
         };
 
         let scaled = font.as_scaled(scale);
@@ -64,7 +65,14 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
         let baseline_y = (ICON_SIZE as f32 - visual_h) / 2.0 + ascent;
         let start_x = (ICON_SIZE as f32 - total_w) / 2.0;
 
-        const STROKE_OFFSETS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+        // 8-direction 2-px stroke (including diagonals) for a heavier
+        // outline on a 96×96 canvas — the single-pixel 4-direction
+        // stroke looked thin and the digits blurred into the taskbar
+        // background on high-DPI displays.
+        const STROKE_OFFSETS: [(i32, i32); 8] = [
+            (-2, 0), (2, 0), (0, -2), (0, 2),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ];
 
         let mut x = start_x;
         for c in value.chars() {
