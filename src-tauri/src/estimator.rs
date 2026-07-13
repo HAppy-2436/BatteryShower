@@ -99,9 +99,11 @@ mod tests {
 
     #[test]
     fn estimate_charging_full() {
-        // full=50000 mWh, currently 20000 mWh, avg 30 W → remaining 30000 mWh / 30 W = 1000 Wh / 30 W ≈ 33.3h
-        // 33.3h * 3600 ≈ 120000s
+        // full=50000 mWh, currently 20000 mWh, avg 30 W
+        // remaining energy = 30 Wh, time = 30 Wh / 30 W = 1 h = 3600 s
+        // (Previous test asserted ~120_000 s — that was a unit mistake
+        // treating 30000 mWh as 1000 Wh instead of 30 Wh.)
         let s = estimate_remaining_seconds(20000.0, 50000.0, 30.0);
-        assert!(s > 119_000 && s < 121_000, "got {}", s);
+        assert!(s > 3500 && s < 3700, "got {}", s);
     }
 }
