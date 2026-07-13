@@ -10,6 +10,7 @@
 
 mod color;
 mod estimator;
+mod log;
 mod render;
 mod sensors;
 mod store;
@@ -89,6 +90,14 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            // Open the always-on log file first so subsequent diagnostics land somewhere
+            // visible even in release builds (no console there).
+            let log_path = std::env::var("USERPROFILE")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("batteryshower.log");
+            log::log_open(&log_path);
+
             let app_dir = app
                 .path()
                 .app_data_dir()
@@ -99,6 +108,7 @@ pub fn run() {
                 .expect("open SQLite store");
 
             let tray_icon = tray::build_tray(&app.handle())?;
+            log::log_write("[BatteryShower:init] tray icon built");
 
             let state = AppState {
                 store: Arc::new(store),
@@ -106,9 +116,26 @@ pub fn run() {
                 current_session: Arc::new(Mutex::new(None)),
                 power_avg: Arc::new(Mutex::new(PowerAverage::new(300))), // 5 min sliding window
             };
+
+            // Diagnostics: try one synchronous read so the log file
+            // shows a clear pass/fail before the 1-Hz async loop starts.
+            match state.monitor.read() {
+                Some(r) => log::log_write(&format!(
+                    "[BatteryShower:init] first read OK: state={:?} power={:.2}W %={} voltage={:.2}V current={:.3}A",
+                    r.state, r.power_watts, r.percentage, r.voltage_v, r.current_a
+                )),
+                None => log::log_write(
+                    "[BatteryShower:init] FIRST READ FAILED — IOCTL on \\\\.\\BATTERY0 returned None. \
+                     Likely cause: \\.\\BATTERY0 is not enumerable for this user/session. \
+                     Try running as Administrator, or check that the laptop actually has a battery exposed at this path.",
+                ),
+            }
+
             app.manage(state);
+            log::log_write("[BatteryShower:init] state managed");
 
             start_sampling_loop(app.handle().clone(), tray_icon);
+            log::log_write("[BatteryShower:init] sampling loop spawned");
             Ok(())
         })
         // Rule: closing the curve window must HIDE it, not exit the app.

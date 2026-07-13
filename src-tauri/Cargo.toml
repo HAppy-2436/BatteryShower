@@ -31,6 +31,10 @@ serde_json = "1"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Battery reading — cross-platform, on Windows uses SetupAPI to enumerate
+# all battery devices (so we never get stuck on a hard-coded \\.\BATTERY0 path).
+battery = "0.7"
+
 # Storage
 rusqlite = { version = "0.32", features = ["bundled"] }
 
@@ -43,17 +47,7 @@ image = "0.25"
 imageproc = "0.25"
 ab_glyph = "0.2"
 
-# Windows-specific: battery IOCTL via winapi (stable 5y, less churn than `windows`)
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = [
-    "fileapi",
-    "handleapi",
-    "ioapiset",
-    "minwindef",
-    "ntdef",
-    "winnt",
-    "impl-default",
-] }
+# (No Windows-specific deps needed — the `battery` crate handles everything.)
 
 [profile.release]
 panic = "abort"

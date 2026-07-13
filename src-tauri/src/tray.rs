@@ -38,12 +38,24 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon<Wry>> {
                 // noop
             }
         })
+        .on_tray_icon_event(|_tray, _event| {
+            // redundant hook kept to ensure Tauri registers an event sink;
+            // main on_tray_icon_event above swallows left-click.
+        })
         .build(app)?;
     Ok(icon)
 }
 
 fn default_tray_icon() -> tauri::image::Image<'static> {
-    // 16×16 transparent placeholder until the first sample arrives.
-    let data = vec![0u8; 16 * 16 * 4];
-    tauri::image::Image::new_owned(data, 16, 16)
+    // 32×32 neutral gray placeholder — visible against any Windows theme,
+    // replaced within ~1 s of the first battery sample.
+    const N: usize = 32 * 32;
+    let mut data = vec![0u8; N * 4];
+    for i in 0..N {
+        data[i * 4] = 96; // R
+        data[i * 4 + 1] = 96; // G
+        data[i * 4 + 2] = 96; // B
+        data[i * 4 + 3] = 255; // A (opaque)
+    }
+    tauri::image::Image::new_owned(data, 32, 32)
 }

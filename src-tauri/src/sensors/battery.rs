@@ -1,54 +1,24 @@
-//! Battery sensor — reads charge/discharge power, capacity, percentage
-//! via Windows IOCTL on \\.\BATTERY0.
+//! Battery sensor — reads charge/discharge power, capacity, percentage.
 //!
-//! Two IOCTLs are used:
-//! - `IOCTL_BATTERY_QUERY_INFORMATION` → `BATTERY_INFORMATION` (design + full-charge capacity)
-//! - `IOCTL_BATTERY_QUERY_STATUS`      → `BATTERY_STATUS`      (live voltage, current, %)
+//! We use the `battery` crate rather than hand-rolling IOCTLs against
+//! `\\.\BATTERY0`. Reason: BatteryMaster's reference implementation
+//! uses the same crate, and on Windows `battery` enumerates devices via
+//! SetupAPI (`GUID_DEVCLASS_BATTERY`), so it correctly finds the right
+//! battery path — including `\\.\BATTERY1`, `\\.\CompositeBattery`, or
+//! devices that aren't accessible from a non-Administrator session.
+//!
+//! IMPORTANT: `battery::Manager` is `!Send` (it wraps a `Rc` on Windows).
+//! We therefore do NOT keep a Manager as a field — we build a fresh one
+//! on every read(). The overhead is small (a single SetupDiGetClassDevs
+//! call) and avoids needing a Mutex around the manager.
+//!
+//! Field reference: see topabomb/BatteryMaster crates/battery/src/battery_status.rs
 
-#![cfg(windows)]
-
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-
-use winapi::shared::minwindef::DWORD;
-use winapi::shared::ntdef::NULL;
-use winapi::um::fileapi::{CreateFileW, OPEN_EXISTING};
-use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::ioapiset::DeviceIoControl;
-use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
-use winapi::um::winnt::{
-    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
-};
-
-const IOCTL_BATTERY_QUERY_INFORMATION: DWORD = 0x0029_0410;
-const IOCTL_BATTERY_QUERY_STATUS: DWORD = 0x0029_0414;
-const BATTERY_INFORMATION_LEVEL: DWORD = 1;
-
-const BATTERY_CHARGING: u32 = 0x0000_0004;
-const BATTERY_DISCHARGING: u32 = 0x0000_0002;
-
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct BatteryStatusRaw {
-    power_state: u32,
-    capacity: u32,
-    voltage: u32,
-    rate: i32,
-}
-
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct BatteryInformationRaw {
-    capabilities: u32,
-    technology: u8,
-    reserved: [u8; 3],
-    chemistry: [u16; 4],
-    design_capacity: u32,
-    full_charged_capacity: u32,
-    default_alert1: u32,
-    design_cycle_count: u32,
-    default_alert2: u32,
-    critical_bias: u32,
-}
+use battery::units::electric_potential::volt;
+use battery::units::energy::watt_hour;
+use battery::units::power::watt;
+use battery::units::ratio::percent;
+use battery::{Manager, State as ExtState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -62,119 +32,109 @@ pub enum State {
 pub struct BatteryReading {
     pub state: State,
     pub percentage: u8,
-    /// Charge / discharge / full-state instantaneous power, in watts (always >= 0).
+    /// Instantaneous power in watts (always >= 0).
     pub power_watts: f64,
-    /// Reported design capacity (mWh). 0 if unknown.
+    /// Design capacity in mWh. 0 if unknown.
     pub design_capacity_mwh: u32,
-    /// Reported full-charge capacity (mWh). 0 if unknown.
+    /// Full-charge capacity in mWh. 0 if unknown.
     pub full_charge_capacity_mwh: u32,
     pub voltage_v: f64,
     pub current_a: f64,
 }
 
-pub struct BatteryMonitor {
-    design_capacity: AtomicU32,
-    full_charge_capacity: AtomicU32,
-    initialized: AtomicBool,
-}
+pub struct BatteryMonitor;
 
 impl BatteryMonitor {
     pub fn new() -> Self {
-        Self {
-            design_capacity: AtomicU32::new(0),
-            full_charge_capacity: AtomicU32::new(0),
-            initialized: AtomicBool::new(false),
+        // Probe once at startup so the log file gets a clear "yes/no battery
+        // service available" line. Subsequent reads are per-call.
+        match Manager::new() {
+            Ok(m) => {
+                let count = m.batteries().map(|it| it.count()).unwrap_or(0);
+                crate::log::log_write(&format!(
+                    "[BatteryShower:sensor] battery service OK, {} battery(ies) enumerated",
+                    count
+                ));
+            }
+            Err(e) => crate::log::log_write(&format!(
+                "[BatteryShower:sensor] battery service unavailable: {}",
+                e
+            )),
         }
+        Self
     }
 
     pub fn read(&self) -> Option<BatteryReading> {
-        unsafe { self.read_inner() }
-    }
-
-    unsafe fn read_inner(&self) -> Option<BatteryReading> {
-        // Open \\.\BATTERY0
-        let path: Vec<u16> = "\\\\.\\BATTERY0\0".encode_utf16().collect();
-        let handle = CreateFileW(
-            path.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            std::ptr::null_mut::<SECURITY_ATTRIBUTES>(),
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            std::ptr::null_mut(),
-        );
-        if handle == INVALID_HANDLE_VALUE {
-            return None;
-        }
-
-        // Lazily read BATTERY_INFORMATION once
-        if !self.initialized.load(Ordering::Relaxed) {
-            let mut info = BatteryInformationRaw::default();
-            let mut bytes: DWORD = 0;
-            let _ = DeviceIoControl(
-                handle,
-                IOCTL_BATTERY_QUERY_INFORMATION,
-                &BATTERY_INFORMATION_LEVEL as *const _ as *mut _,
-                std::mem::size_of_val(&BATTERY_INFORMATION_LEVEL) as DWORD,
-                &mut info as *mut _ as *mut _,
-                std::mem::size_of::<BatteryInformationRaw>() as DWORD,
-                &mut bytes,
-                std::ptr::null_mut(),
-            );
-            self.design_capacity
-                .store(info.design_capacity, Ordering::Relaxed);
-            self.full_charge_capacity
-                .store(info.full_charged_capacity, Ordering::Relaxed);
-            self.initialized.store(true, Ordering::Relaxed);
-        }
-
-        // Read BATTERY_STATUS
-        let mut status = BatteryStatusRaw::default();
-        let mut bytes: DWORD = 0;
-        let ok = DeviceIoControl(
-            handle,
-            IOCTL_BATTERY_QUERY_STATUS,
-            NULL,
-            0,
-            &mut status as *mut _ as *mut _,
-            std::mem::size_of::<BatteryStatusRaw>() as DWORD,
-            &mut bytes,
-            std::ptr::null_mut(),
-        );
-        CloseHandle(handle);
-        if ok == 0 {
-            return None;
-        }
-
-        // Interpret state
-        let state = if (status.power_state & BATTERY_CHARGING) != 0 {
-            State::Charging
-        } else if (status.power_state & BATTERY_DISCHARGING) != 0 {
-            State::Discharging
-        } else {
-            State::Full
+        let manager = match Manager::new() {
+            Ok(m) => m,
+            Err(e) => {
+                crate::log::log_write(&format!(
+                    "[BatteryShower:sensor] Manager::new() failed: {}",
+                    e
+                ));
+                return None;
+            }
+        };
+        let mut iter = match manager.batteries() {
+            Ok(it) => it,
+            Err(e) => {
+                crate::log::log_write(&format!(
+                    "[BatteryShower:sensor] manager.batteries() failed: {}",
+                    e
+                ));
+                return None;
+            }
+        };
+        let battery = match iter.next() {
+            Some(Ok(b)) => b,
+            Some(Err(e)) => {
+                crate::log::log_write(&format!(
+                    "[BatteryShower:sensor] first battery entry error: {}",
+                    e
+                ));
+                return None;
+            }
+            None => {
+                // Not necessarily an error on a desktop with no battery;
+                // log once at debug level via the absence of any later
+                // successful read. The "no batteries found" line was already
+                // emitted by new()'s count probe.
+                return None;
+            }
         };
 
-        // Voltage is always mV
-        let voltage_v = status.voltage as f64 / 1000.0;
-        // Rate: positive = discharge, negative = charge. Units depend on flags,
-        // but on virtually all laptops this is mW (signed). Take absolute for display.
-        let power_w = status.rate.unsigned_abs() as f64 / 1000.0;
-        // P = V * I  →  I = P / V
+        // Translate state — Unknown/Empty treated as Discharging (mirrors BM).
+        let state = match battery.state() {
+            ExtState::Charging => State::Charging,
+            ExtState::Discharging => State::Discharging,
+            ExtState::Full => State::Full,
+            ExtState::Empty => State::Discharging,
+            ExtState::Unknown => State::Discharging,
+            _ => State::Discharging,
+        };
+
+        // uom 0.30's get::<U>() returns f32; we widen to f64 for our struct.
+        let percentage = battery.state_of_charge().get::<percent>() as u8;
+        let voltage_v: f64 = battery.voltage().get::<volt>().into();
+        // energy_rate() is signed: positive = charging, negative = discharging.
+        // We display magnitude only; direction is carried by `state`.
+        let power_w: f64 = battery.energy_rate().get::<watt>().abs().into();
         let current_a = if voltage_v > 0.01 {
             power_w / voltage_v
         } else {
             0.0
         };
-
-        let percentage = (status.capacity as u32).min(100) as u8;
+        let design_capacity_mwh =
+            (battery.energy_full_design().get::<watt_hour>() as f64 * 1000.0) as u32;
+        let full_charge_capacity_mwh =
+            (battery.energy_full().get::<watt_hour>() as f64 * 1000.0) as u32;
 
         Some(BatteryReading {
             state,
             percentage,
             power_watts: power_w,
-            design_capacity_mwh: self.design_capacity.load(Ordering::Relaxed),
-            full_charge_capacity_mwh: self.full_charge_capacity.load(Ordering::Relaxed),
+            design_capacity_mwh,
+            full_charge_capacity_mwh,
             voltage_v,
             current_a,
         })
