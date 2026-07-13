@@ -56,9 +56,14 @@ function renderChart() {
   const { points, avg, energy, duration } = formatSession(session);
   chart.setOption(
     {
+      backgroundColor: "transparent",
+      textStyle: { color: "#e5e7eb" },
       grid: { left: 50, right: 20, top: 30, bottom: 40 },
       tooltip: {
         trigger: "axis",
+        backgroundColor: "#1f2937",
+        borderColor: "#374151",
+        textStyle: { color: "#e5e7eb" },
         formatter: (params: any) => {
           const p = params[0];
           return `${(p.value[0] / 60).toFixed(1)} min<br/><b>${p.value[1].toFixed(2)} W</b>`;
@@ -69,15 +74,23 @@ function renderChart() {
         name: "min",
         nameLocation: "middle",
         nameGap: 24,
+        nameTextStyle: { color: "#9ca3af" },
+        axisLine: { lineStyle: { color: "#374151" } },
         axisLabel: {
+          color: "#9ca3af",
           formatter: (v: number) => (v / 60).toFixed(0),
         },
+        splitLine: { lineStyle: { color: "#1f2937" } },
       },
       yAxis: {
         type: "value",
         name: "W",
         nameLocation: "middle",
         nameGap: 40,
+        nameTextStyle: { color: "#9ca3af" },
+        axisLine: { lineStyle: { color: "#374151" } },
+        axisLabel: { color: "#9ca3af" },
+        splitLine: { lineStyle: { color: "#1f2937" } },
       },
       series: [
         {
@@ -85,8 +98,9 @@ function renderChart() {
           smooth: true,
           showSymbol: false,
           data: points,
-          areaStyle: { opacity: 0.2 },
-          lineStyle: { width: 2 },
+          areaStyle: { opacity: 0.2, color: "#10b981" },
+          lineStyle: { width: 2, color: "#10b981" },
+          itemStyle: { color: "#10b981" },
         },
       ],
     },
@@ -164,10 +178,11 @@ onMounted(() => {
 
 <style scoped>
 .curve {
-  background: #fff;
+  background: #1f2937;
   border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  color: #e5e7eb;
 }
 
 .tabs {
@@ -177,9 +192,9 @@ onMounted(() => {
 }
 
 .tabs button {
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
-  color: #4b5563;
+  border: 1px solid #374151;
+  background: #111827;
+  color: #9ca3af;
   padding: 6px 14px;
   border-radius: 6px;
   cursor: pointer;
@@ -188,10 +203,15 @@ onMounted(() => {
   transition: all 0.15s;
 }
 
-.tabs button.active {
+.tabs button:hover {
   background: #1f2937;
-  color: white;
-  border-color: #1f2937;
+  color: #e5e7eb;
+}
+
+.tabs button.active {
+  background: #10b981;
+  color: #0a0a0a;
+  border-color: #10b981;
 }
 
 .stats {
@@ -202,14 +222,15 @@ onMounted(() => {
 }
 
 .stat {
-  background: #f9fafb;
+  background: #111827;
   padding: 10px 12px;
   border-radius: 8px;
+  border: 1px solid #374151;
 }
 
 .label {
   font-size: 11px;
-  color: #6b7280;
+  color: #9ca3af;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -218,6 +239,7 @@ onMounted(() => {
   font-size: 18px;
   font-weight: 600;
   margin-top: 2px;
+  color: #e5e7eb;
   font-variant-numeric: tabular-nums;
 }
 

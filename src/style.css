@@ -1,5 +1,6 @@
-/* BatteryShower global styles */
+/* BatteryShower global styles - always dark theme to match the tray-app aesthetic */
 :root {
+  color-scheme: dark;
   font-family:
     "Inter",
     -apple-system,
@@ -20,12 +21,10 @@
 body {
   margin: 0;
   padding: 0;
-  background: #fafafa;
+  background: #0f1115;
+  color: #e5e7eb;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #0f1115;
-    color: #e5e7eb;
-  }
+html {
+  background: #0f1115;
 }

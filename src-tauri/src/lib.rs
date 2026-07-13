@@ -21,14 +21,14 @@ use std::time::Duration;
 use tauri::async_runtime;
 use tauri::image::Image;
 use tauri::tray::TrayIcon;
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 use crate::estimator::{estimate_remaining_seconds, format_remaining, PowerAverage};
 use crate::render::render_icon;
 use crate::sensors::battery::BatteryReading;
 use crate::sensors::State;
 use crate::store::{Sample, Session, Store};
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 struct AppState {
@@ -110,6 +110,16 @@ pub fn run() {
 
             start_sampling_loop(app.handle().clone(), tray_icon);
             Ok(())
+        })
+        // Rule: closing the curve window must HIDE it, not exit the app.
+        // Only the tray's "Quit" menu entry (or Alt+F4 from the tray) should exit.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_app_version,

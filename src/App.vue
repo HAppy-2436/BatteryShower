@@ -52,7 +52,7 @@ onMounted(async () => {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #1a1a1a;
+  color: #e5e7eb;
 }
 
 .hero {
@@ -64,11 +64,12 @@ onMounted(async () => {
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.02em;
+  color: #f3f4f6;
 }
 
 .subtitle {
   margin: 0;
-  color: #6b7280;
+  color: #9ca3af;
   font-size: 14px;
 }
 
@@ -79,12 +80,14 @@ onMounted(async () => {
 }
 
 .alert.error {
-  background: #fee2e2;
-  color: #991b1b;
+  background: #7f1d1d;
+  color: #fecaca;
+  border: 1px solid #991b1b;
 }
 
 .alert.info {
-  background: #f3f4f6;
-  color: #4b5563;
+  background: #1f2937;
+  color: #d1d5db;
+  border: 1px solid #374151;
 }
 </style>
