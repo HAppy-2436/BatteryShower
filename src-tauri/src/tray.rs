@@ -43,15 +43,14 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon<Wry>> {
 }
 
 fn default_tray_icon() -> tauri::image::Image<'static> {
-    // 32×32 neutral gray placeholder — visible against any Windows theme,
-    // replaced within ~1 s of the first battery sample.
-    const N: usize = 32 * 32;
-    let mut data = vec![0u8; N * 4];
-    for i in 0..N {
-        data[i * 4] = 96; // R
-        data[i * 4 + 1] = 96; // G
-        data[i * 4 + 2] = 96; // B
-        data[i * 4 + 3] = 255; // A (opaque)
-    }
-    tauri::image::Image::new_owned(data, 32, 32)
+    // 64×64 neutral gray placeholder — visible against any Windows theme,
+    // replaced within ~1 s of the first battery sample. PNG-encoded so
+    // it goes through the same `Image::from_bytes` path as the live icon.
+    use tauri::image::Image as TauriImage;
+    let png = crate::render::default_icon();
+    TauriImage::from_bytes(&png).unwrap_or_else(|_| {
+        // PNG decode failed — fall back to a tiny 1×1 transparent icon.
+        // (Never reached unless render::default_icon is broken.)
+        TauriImage::new_owned(vec![0u8; 4], 1, 1)
+    })
 }

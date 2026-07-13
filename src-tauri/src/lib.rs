@@ -229,9 +229,21 @@ async fn process_reading(
     // ---- 4. Update tray icon (rule #1: full→white, charging→green, discharge→red; rule #1.1 gradient) ----
     // Show the watts value in all three states (rule #1); only the *color* changes.
     let display = format!("{:.1}", reading.power_watts);
-    let pixels = render_icon(&display, reading.state, reading.percentage);
-    let img = Image::new_owned(pixels, 32, 32);
-    let _ = tray.set_icon(Some(img));
+    let png_bytes = render_icon(&display, reading.state, reading.percentage);
+    match Image::from_bytes(&png_bytes) {
+        Ok(img) => {
+            if let Err(e) = tray.set_icon(Some(img)) {
+                crate::log::log_write(&format!(
+                    "[BatteryShower:tray] set_icon failed: {:?}",
+                    e
+                ));
+            }
+        }
+        Err(e) => crate::log::log_write(&format!(
+            "[BatteryShower:tray] Image::from_bytes (PNG decode) failed: {:?}",
+            e
+        )),
+    }
 
     // ---- 5. Update tooltip (rule #2: % + remaining; rule #2.1: full→empty) ----
     let tooltip = if reading.state == State::Full {
