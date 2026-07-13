@@ -1,0 +1,72 @@
+# ============================================
+# BatteryShower .gitignore
+# Tauri 2 + Rust + Vue 3 + Vite + TypeScript
+# ============================================
+
+# ---------- Rust / Cargo ----------
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# ---------- Node / Vite / npm ----------
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+.tsbuildinfo
+
+# ---------- Tauri ----------
+src-tauri/target/
+src-tauri/gen/
+
+# ---------- IDE / Editor ----------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- OS / Misc ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.log
+*.tmp
+*.bak
+*.swp
+*.orig
+.env
+.env.local
+.env.*.local
+
+# ---------- Build / Release artifacts ----------
+*.exe
+*.msi
+*.dmg
+*.deb
+*.AppImage
+*.app
+release/
+build/
+
+# ---------- Generated icons (keep source) ----------
+src-tauri/icons/*.ico
+src-tauri/icons/*.icns
+src-tauri/icons/*.png
+!src-tauri/icons/icon.png
+!src-tauri/icons/32x32.png
+!src-tauri/icons/128x128.png
+!src-tauri/icons/128x128@2x.png
+!src-tauri/icons/icon.ico
+
+# ---------- BatteryShower runtime data ----------
+# User's own battery data — never commit
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm

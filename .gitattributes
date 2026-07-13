@@ -1,0 +1,16 @@
+[http]
+    postBuffer = 524288000
+[init]
+    defaultBranch = main
+[core]
+    autocrlf = false
+    eol = lf
+[core.attributes]
+    * text=auto eol=lf
+    *.png binary
+    *.ico binary
+    *.icns binary
+    *.ttf binary
+    *.otf binary
+    *.woff binary
+    *.woff2 binary
