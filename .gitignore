@@ -70,3 +70,7 @@ data/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+
+# ---------- Local debug / scratch logs ----------
+*.log
+!src-tauri/target/.rustc_info.json

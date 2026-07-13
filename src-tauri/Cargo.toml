@@ -1,0 +1,60 @@
+[package]
+name = "batteryshower"
+version = "0.1.0"
+description = "Lightweight Windows taskbar battery power monitor"
+authors = ["HAppy-2436 <10255101612@stu.ecnu.edu.cn>"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "batteryshower_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "batteryshower"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Tray icon rendering — 2D text into RGBA buffer via imageproc
+image = "0.25"
+imageproc = "0.25"
+rusttype = "0.9"
+
+# Windows-specific: battery IOCTL, GDI for high-DPI tray icon rendering
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Power",
+] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
