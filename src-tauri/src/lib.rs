@@ -1,5 +1,5 @@
 //! BatteryShower — Tauri 2 + Rust + Vue 3 entry point.
-//! (build bump 2026-07-13: refresh dist embed)
+//! (build bump 2026-07-13: refresh dist embed v2)
 //!
 //! Lifecycle:
 //! 1. `setup` — open SQLite store, init battery monitor, build tray, start

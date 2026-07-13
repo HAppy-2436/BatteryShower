@@ -1,16 +1,23 @@
-//! Renders a 64×64 RGBA8 tray-icon image showing the power value (e.g. "23.4")
+//! Renders a 96×96 RGBA8 tray-icon image showing the power value (e.g. "23")
 //! in a system monospace font, with a glyph color derived from
 //! [`crate::color::icon_color`]. The buffer is then PNG-encoded for
 //! Tauri 2's `Image::from_bytes` to consume — this matches the path
 //! BatteryMaster uses (topabomb/BatteryMaster `src-tauri/src/tray.rs`).
 //!
-//! 64×64 is the Windows 10/11 taskbar tray-icon size at @2x DPI. A 32×32
-//! icon gets stretched to 64×64 by the taskbar and rendered as a
-//! washed-out black square with a vertical white artifact.
-//!
-//! The icon is **transparent** except for the glyph itself + a 1-px
-//! black outline — Windows taskbar background shows through, so the
-//! same icon works on light & dark themes.
+//! Layout notes (audit on 2026-07-13):
+//! - No outline. User reported previous 2-px stroke as "完全不需要" +
+//!   it inflated total ink and pushed glyphs off-canvas at the
+//!   larger sizes.
+//! - Centring uses ab_glyph's `px_bounds()` (actual pixel rectangle
+//!   of each glyph) rather than `ascent - descent` (em-square, not
+//!   pixel). The em-square math over-estimated visual height for
+//!   Consolas and pushed the bottom of two-digit numbers off the
+//!   96-px canvas.
+//! - Font sizes mirror BatteryMaster's 64-px pattern: 60pt for 1–2
+//!   digits, 38pt for ≥3 digits, scaled 1.5× to fit a 96-px canvas
+//!   (so 90pt / 57pt). 90pt Consolas is roughly 67-px tall in
+//!   pixel-bounds terms, which leaves ~14 px of headroom on top
+//!   and bottom — verified empirically.
 
 use ab_glyph::{point, Font, FontRef, PxScale, ScaleFont};
 use image::codecs::png::PngEncoder;
@@ -25,8 +32,8 @@ const FONT_DATA: &[u8] = include_bytes!("../assets/Consola.ttf");
 
 const ICON_SIZE: u32 = 96;
 
-/// Render a 64×64 PNG-encoded tray icon. The returned bytes are passed
-/// to `tauri::image::Image::from_bytes`.
+/// Render a 96×96 PNG-encoded tray icon. Returned bytes go to
+/// `tauri::image::Image::from_bytes`.
 pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
     let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> =
         ImageBuffer::from_pixel(ICON_SIZE, ICON_SIZE, Rgba([0, 0, 0, 0]));
@@ -34,75 +41,79 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
     if !value.is_empty() {
         let (r, g, b) = icon_color(state, percentage);
         let text_color = Rgba([r, g, b, 255]);
-        // Black outline so the glyph is legible on both light and dark
-        // Windows taskbar themes — critical for rule #1 (white glyph on
-        // full state) which would otherwise vanish on a light taskbar.
-        let stroke_color = Rgba([0, 0, 0, 255]);
 
         let font =
             FontRef::try_from_slice(FONT_DATA).expect("failed to parse embedded Consola.ttf");
 
-        // Adaptive font size for a 96×96 canvas. Bigger strokes for legibility
-        // on 4K / @2x DPI taskbars (which is what the user reported as
-        // "数字完全看不清分辨率太低太低").
+        // Match BatteryMaster's 64-px rule (60pt for 1–2 digits, 38pt for
+        // ≥3) and scale 1.5× to fit our 96-px canvas.
         let scale: PxScale = match value.chars().count() {
-            1 => PxScale::from(80.0),
-            2 => PxScale::from(64.0),
-            3 => PxScale::from(48.0),
-            _ => PxScale::from(40.0),
+            1 | 2 => PxScale::from(90.0),
+            _ => PxScale::from(57.0),
         };
 
         let scaled = font.as_scaled(scale);
 
-        let total_w: f32 = value
+        // Per-glyph horizontal advance (monospace → all equal, but
+        // measured precisely anyway).
+        let advances: Vec<f32> = value
             .chars()
             .map(|c| scaled.h_advance(font.glyph_id(c)))
-            .sum();
+            .collect();
+        let total_w: f32 = advances.iter().sum();
 
-        let ascent = scaled.ascent();
-        let descent = scaled.descent();
-        let visual_h = ascent - descent;
-        let baseline_y = (ICON_SIZE as f32 - visual_h) / 2.0 + ascent;
+        // Real pixel bounding box of the whole text run. We measure
+        // each glyph at its draw position so min/max y reflects the
+        // *actual* glyph pixels, not the em-square.
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+        let mut x_cursor = 0.0_f32;
+        for (i, c) in value.chars().enumerate() {
+            let g = font
+                .glyph_id(c)
+                .with_scale_and_position(scale, point(x_cursor, 0.0));
+            if let Some(outlined) = font.outline_glyph(g) {
+                let b = outlined.px_bounds();
+                if b.min.y < min_y {
+                    min_y = b.min.y;
+                }
+                if b.max.y > max_y {
+                    max_y = b.max.y;
+                }
+            }
+            x_cursor += advances[i];
+        }
+        // If every char failed to outline, fall back to em-square.
+        let actual_h = if max_y > min_y {
+            max_y - min_y
+        } else {
+            (scaled.ascent() - scaled.descent()).max(1.0)
+        };
+
+        // Centring: glyph block centred in the 96-px square. We pass
+        // draw_text_mut the glyph's own top-left pixel, not the centre,
+        // because imageproc's draw_text_mut takes a top-left corner.
         let start_x = (ICON_SIZE as f32 - total_w) / 2.0;
-
-        // 8-direction 2-px stroke (including diagonals) for a heavier
-        // outline on a 96×96 canvas — the single-pixel 4-direction
-        // stroke looked thin and the digits blurred into the taskbar
-        // background on high-DPI displays.
-        const STROKE_OFFSETS: [(i32, i32); 8] = [
-            (-2, 0), (2, 0), (0, -2), (0, 2),
-            (-1, -1), (-1, 1), (1, -1), (1, 1),
-        ];
+        let y_offset = (ICON_SIZE as f32 - actual_h) / 2.0 - min_y;
 
         let mut x = start_x;
-        for c in value.chars() {
-            let g = font.glyph_id(c).with_scale_and_position(scale, point(x, baseline_y));
+        for (i, c) in value.chars().enumerate() {
+            let g = font
+                .glyph_id(c)
+                .with_scale_and_position(scale, point(x, y_offset));
             if let Some(outlined) = font.outline_glyph(g) {
-                let bounds = outlined.px_bounds();
-                let bx = bounds.min.x as i32;
-                let by = bounds.min.y as i32;
-                for (dx, dy) in STROKE_OFFSETS {
-                    draw_text_mut(
-                        &mut img,
-                        stroke_color,
-                        bx + dx,
-                        by + dy,
-                        scale,
-                        &font,
-                        &c.to_string(),
-                    );
-                }
+                let b = outlined.px_bounds();
                 draw_text_mut(
                     &mut img,
                     text_color,
-                    bx,
-                    by,
+                    b.min.x as i32,
+                    b.min.y as i32,
                     scale,
                     &font,
                     &c.to_string(),
                 );
             }
-            x += scaled.h_advance(font.glyph_id(c));
+            x += advances[i];
         }
     }
 
@@ -115,7 +126,7 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
         ExtendedColorType::Rgba8,
     ) {
         crate::log::log_write(&format!(
-            "[BatteryShower:render] PNG encode failed: {} — falling back to 1x1 transparent",
+            "[BatteryShower:render] PNG encode failed: {} — falling back to empty PNG",
             e
         ));
         return Vec::new();
@@ -123,9 +134,9 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
     png_bytes
 }
 
-/// 64×64 opaque gray placeholder used on first launch before any
+/// 96×96 opaque gray placeholder used on first launch before any
 /// battery sample arrives. PNG-encoded so it slots into the same
-/// `Image::from_bytes` path as the real icon.
+/// `Image::from_bytes` path as the live icon.
 pub fn default_icon() -> Vec<u8> {
     const N: usize = (ICON_SIZE * ICON_SIZE) as usize;
     let mut img_data = vec![0u8; N * 4];
