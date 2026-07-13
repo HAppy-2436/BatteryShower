@@ -9,16 +9,19 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+use winapi::shared::minwindef::DWORD;
+use winapi::shared::ntdef::NULL;
+use winapi::um::fileapi::{CreateFileW, OPEN_EXISTING};
+use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+use winapi::um::ioapiset::DeviceIoControl;
+use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
+use winapi::um::winnt::{
+    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
 };
-use windows::Win32::System::IO::DeviceIoControl;
 
-const IOCTL_BATTERY_QUERY_INFORMATION: u32 = 0x0029_0410;
-const IOCTL_BATTERY_QUERY_STATUS: u32 = 0x0029_0414;
-const BATTERY_INFORMATION_LEVEL: u32 = 1;
+const IOCTL_BATTERY_QUERY_INFORMATION: DWORD = 0x0029_0410;
+const IOCTL_BATTERY_QUERY_STATUS: DWORD = 0x0029_0414;
+const BATTERY_INFORMATION_LEVEL: DWORD = 1;
 
 const BATTERY_CHARGING: u32 = 0x0000_0004;
 const BATTERY_DISCHARGING: u32 = 0x0000_0002;
@@ -91,30 +94,32 @@ impl BatteryMonitor {
     unsafe fn read_inner(&self) -> Option<BatteryReading> {
         // Open \\.\BATTERY0
         let path: Vec<u16> = "\\\\.\\BATTERY0\0".encode_utf16().collect();
-        let handle: HANDLE = CreateFileW(
-            PCWSTR(path.as_ptr()),
+        let handle = CreateFileW(
+            path.as_ptr(),
             GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
-            None,
+            std::ptr::null_mut::<SECURITY_ATTRIBUTES>(),
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
-            HANDLE::default(),
-        )
-        .ok()?;
+            std::ptr::null_mut(),
+        );
+        if handle == INVALID_HANDLE_VALUE {
+            return None;
+        }
 
         // Lazily read BATTERY_INFORMATION once
         if !self.initialized.load(Ordering::Relaxed) {
             let mut info = BatteryInformationRaw::default();
-            let mut bytes: u32 = 0;
+            let mut bytes: DWORD = 0;
             let _ = DeviceIoControl(
                 handle,
                 IOCTL_BATTERY_QUERY_INFORMATION,
-                Some(&BATTERY_INFORMATION_LEVEL as *const _ as *const _),
-                std::mem::size_of_val(&BATTERY_INFORMATION_LEVEL) as u32,
-                Some(&mut info as *mut _ as *mut _),
-                std::mem::size_of::<BatteryInformationRaw>() as u32,
-                Some(&mut bytes),
-                None,
+                &BATTERY_INFORMATION_LEVEL as *const _ as *mut _,
+                std::mem::size_of_val(&BATTERY_INFORMATION_LEVEL) as DWORD,
+                &mut info as *mut _ as *mut _,
+                std::mem::size_of::<BatteryInformationRaw>() as DWORD,
+                &mut bytes,
+                std::ptr::null_mut(),
             );
             self.design_capacity
                 .store(info.design_capacity, Ordering::Relaxed);
@@ -125,19 +130,21 @@ impl BatteryMonitor {
 
         // Read BATTERY_STATUS
         let mut status = BatteryStatusRaw::default();
-        let mut bytes: u32 = 0;
+        let mut bytes: DWORD = 0;
         let ok = DeviceIoControl(
             handle,
             IOCTL_BATTERY_QUERY_STATUS,
-            None,
+            NULL,
             0,
-            Some(&mut status as *mut _ as *mut _),
-            std::mem::size_of::<BatteryStatusRaw>() as u32,
-            Some(&mut bytes),
-            None,
+            &mut status as *mut _ as *mut _,
+            std::mem::size_of::<BatteryStatusRaw>() as DWORD,
+            &mut bytes,
+            std::ptr::null_mut(),
         );
-        let _ = CloseHandle(handle);
-        ok.ok()?;
+        CloseHandle(handle);
+        if ok == 0 {
+            return None;
+        }
 
         // Interpret state
         let state = if (status.power_state & BATTERY_CHARGING) != 0 {

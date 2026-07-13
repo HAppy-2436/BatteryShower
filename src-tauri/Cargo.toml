@@ -38,18 +38,21 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 log = "0.4"
 env_logger = "0.11"
 
-# Tray icon rendering — 2D text into RGBA buffer via imageproc
+# Tray icon rendering — 2D text into RGBA buffer via imageproc + ab_glyph
 image = "0.25"
 imageproc = "0.25"
-rusttype = "0.9"
+ab_glyph = "0.2"
 
-# Windows-specific: battery IOCTL, GDI for high-DPI tray icon rendering
+# Windows-specific: battery IOCTL via winapi (stable 5y, less churn than `windows`)
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_System_IO",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Power",
+winapi = { version = "0.3", features = [
+    "fileapi",
+    "handleapi",
+    "ioapiset",
+    "minwindef",
+    "ntdef",
+    "winnt",
+    "impl-default",
 ] }
 
 [profile.release]

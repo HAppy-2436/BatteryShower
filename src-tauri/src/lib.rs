@@ -193,14 +193,12 @@ async fn process_reading(
     if reading.state != State::Full {
         let display = format!("{:.1}", reading.power_watts);
         let pixels = render_icon(&display, reading.state, reading.percentage);
-        if let Ok(img) = Image::from_bytes(pixels, 32, 32) {
-            let _ = tray.set_icon(Some(img));
-        }
+        let img = Image::new_owned(pixels, 32, 32);
+        let _ = tray.set_icon(Some(img));
     } else {
         // Full → empty icon (rule #2.1: hover shows nothing)
-        if let Ok(img) = Image::from_bytes(render_icon("", State::Full, 100), 32, 32) {
-            let _ = tray.set_icon(Some(img));
-        }
+        let img = Image::new_owned(render_icon("", State::Full, 100), 32, 32);
+        let _ = tray.set_icon(Some(img));
     }
 
     // ---- 5. Update tooltip (rule #2: % + remaining; rule #2.1: full→nothing) ----

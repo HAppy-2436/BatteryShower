@@ -1,3 +1,3 @@
 pub mod battery;
 
-pub use battery::{BatteryMonitor, BatteryReading, State};
+pub use battery::State;
