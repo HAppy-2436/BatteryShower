@@ -184,13 +184,13 @@ async fn process_reading(
     // ---- 1. Manage session lifecycle (rule #7: only-most-recent of each state) ----
     {
         let mut current = state.current_session.lock().await;
+        // need_new_session: did the state *change* (or do we have no session yet)?
+        // True when: no active session AND state isn't "full" (start fresh)
+        //            OR active session is for a different state (switch)
+        // False when: active session is for the exact same state (keep accumulating)
         let need_new_session = match &*current {
-            // Already tracking this exact state → keep
-            Some(c) => c.state == state_label,
-            // Not tracking, and we're not Full → start a new one
-            None => state_label != "full",
-            // Tracking some other state, and we're not Full → start a new one
-            // (Note: "Full" doesn't get its own session; the latest charge/discharge session persists.)
+            Some(c) => c.state != state_label, // state changed → switch
+            None => state_label != "full",     // no active → start (unless full)
         };
         if need_new_session {
             // Close existing session (if any)
@@ -227,19 +227,28 @@ async fn process_reading(
     drop(avg);
 
     // ---- 4. Update tray icon (rule #1: full→white, charging→green, discharge→red; rule #1.1 gradient) ----
-    if reading.state != State::Full {
-        let display = format!("{:.1}", reading.power_watts);
-        let pixels = render_icon(&display, reading.state, reading.percentage);
-        let img = Image::new_owned(pixels, 32, 32);
-        let _ = tray.set_icon(Some(img));
-    } else {
-        // Full → empty icon (rule #2.1: hover shows nothing)
-        let img = Image::new_owned(render_icon("", State::Full, 100), 32, 32);
-        let _ = tray.set_icon(Some(img));
-    }
+    // Show the watts value in all three states (rule #1); only the *color* changes.
+    let display = format!("{:.1}", reading.power_watts);
+    let pixels = render_icon(&display, reading.state, reading.percentage);
+    let img = Image::new_owned(pixels, 32, 32);
+    let _ = tray.set_icon(Some(img));
 
-    // ---- 5. Update tooltip (rule #2: % + remaining; rule #2.1: full→nothing) ----
-    let tooltip = build_tooltip(reading, avg_power, reading.full_charge_capacity_mwh);
+    // ---- 5. Update tooltip (rule #2: % + remaining; rule #2.1: full→empty) ----
+    let tooltip = if reading.state == State::Full {
+        // Rule #2.1: "满电时什么都不显示即可"
+        String::new()
+    } else {
+        let label = match reading.state {
+            State::Charging => "充电中",
+            State::Discharging => "放电中",
+            State::Full => "已充满",
+        };
+        let remain_str = match compute_remaining(reading, avg_power) {
+            Some(sec) => format_remaining(sec),
+            None => "—".to_string(),
+        };
+        format!("{} | {}% | 剩余 {}", label, reading.percentage, remain_str)
+    };
     let _ = tray.set_tooltip(Some(&tooltip));
 
     // ---- 6. Emit to frontend ----
@@ -262,23 +271,6 @@ fn state_to_int(state: State) -> i32 {
         State::Discharging => 1,
         State::Full => 2,
     }
-}
-
-fn build_tooltip(reading: BatteryReading, avg_power: Option<f64>, full_mwh: u32) -> String {
-    if reading.state == State::Full {
-        return "BatteryShower | 已充满".to_string();
-    }
-    let label = match reading.state {
-        State::Charging => "充电中",
-        State::Discharging => "放电中",
-        State::Full => "已充满",
-    };
-    let remain_str = match compute_remaining(reading, avg_power) {
-        Some(sec) => format_remaining(sec),
-        None => "—".to_string(),
-    };
-    let _ = full_mwh;
-    format!("{} | {}% | 剩余 {}", label, reading.percentage, remain_str)
 }
 
 fn compute_remaining(reading: BatteryReading, avg_power: Option<f64>) -> Option<i64> {

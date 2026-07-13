@@ -5,10 +5,8 @@
 //! samples). This is the "always keep only the most recent of each state"
 //! requirement (rule #7).
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use std::sync::Mutex;
-
-use crate::sensors::State;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Sample {
@@ -61,23 +59,6 @@ impl Store {
         Ok(Self {
             conn: Mutex::new(conn),
         })
-    }
-
-    /// Delete the most recent session of the given state and return its id
-    /// (if any). Used to enforce "always keep only the most recent of each state".
-    pub fn drop_latest(&self, state_str: &str) -> rusqlite::Result<Option<i64>> {
-        let conn = self.conn.lock().unwrap();
-        let id: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM sessions WHERE state = ?1 ORDER BY start_time DESC LIMIT 1",
-                params![state_str],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(id) = id {
-            conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
-        }
-        Ok(id)
     }
 
     /// Create a new session of the given state, deleting any previous one first.
@@ -155,14 +136,5 @@ impl Store {
             end_time,
             samples,
         }))
-    }
-
-    /// Convenience: turn the sensor state into the persisted string key.
-    pub fn state_key(state: State) -> &'static str {
-        match state {
-            State::Charging => "charging",
-            State::Discharging => "discharging",
-            State::Full => "full",
-        }
     }
 }

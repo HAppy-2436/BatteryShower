@@ -38,10 +38,6 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon<Wry>> {
                 // noop
             }
         })
-        .on_tray_icon_event(|_tray, _event| {
-            // redundant hook kept to ensure Tauri registers an event sink;
-            // main on_tray_icon_event above swallows left-click.
-        })
         .build(app)?;
     Ok(icon)
 }

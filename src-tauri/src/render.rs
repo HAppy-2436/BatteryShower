@@ -28,6 +28,11 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
 
     let (r, g, b) = icon_color(state, percentage);
     let text_color = Rgba([r, g, b, 255]);
+    // Black outline (Rgba([0,0,0,255])) so the glyph is legible on
+    // both light and dark Windows taskbar themes — critical for rule #1
+    // (white glyph on full state) which would otherwise vanish on a
+    // light-themed taskbar.
+    let stroke_color = Rgba([0, 0, 0, 255]);
 
     let font = FontRef::try_from_slice(FONT_DATA).expect("failed to parse embedded Consola.ttf");
 
@@ -54,17 +59,33 @@ pub fn render_icon(value: &str, state: State, percentage: u8) -> Vec<u8> {
     let baseline_y = (ICON_SIZE as f32 - visual_h) / 2.0 + ascent;
     let start_x = (ICON_SIZE as f32 - total_w) / 2.0;
 
-    // Per-char positioning for precise centering.
+    // 4-direction 1-px stroke offsets for the outline pass.
+    const STROKE_OFFSETS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+
+    // Per-char rendering: stroke first, then glyph on top.
     let mut x = start_x;
     for c in value.chars() {
         let g = font.glyph_id(c).with_scale_and_position(scale, point(x, baseline_y));
         if let Some(outlined) = font.outline_glyph(g) {
             let bounds = outlined.px_bounds();
+            let bx = bounds.min.x as i32;
+            let by = bounds.min.y as i32;
+            for (dx, dy) in STROKE_OFFSETS {
+                draw_text_mut(
+                    &mut img,
+                    stroke_color,
+                    bx + dx,
+                    by + dy,
+                    scale,
+                    &font,
+                    &c.to_string(),
+                );
+            }
             draw_text_mut(
                 &mut img,
                 text_color,
-                bounds.min.x as i32,
-                bounds.min.y as i32,
+                bx,
+                by,
                 scale,
                 &font,
                 &c.to_string(),
